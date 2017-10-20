@@ -1,68 +1,25 @@
-import torch
-from torch.autograd import Variable
-from collections import Counter
-import pickle
+# coding=utf-8
+# cer
+
 import random
-import os
-
-USE_CUDA = torch.cuda.is_available()
+import numpy as np
 
 
-def prepare_sequence(seq, to_ix):
-    idxs = list(map(lambda w: to_ix[w] if w in to_ix.keys() else to_ix["<UNK>"], seq))
-    tensor = Variable(torch.LongTensor(idxs)).cuda() if USE_CUDA else Variable(torch.LongTensor(idxs))
-    return tensor
+flatten = lambda l: [item for sublist in l for item in sublist]  # 二维展成一维
 
 
-flatten = lambda l: [item for sublist in l for item in sublist]
-
-
-def preprocessing(file_path, length):
-    """
-    atis-2.train.w-intent.iob
-    """
-
-    processed_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dataset/")
-    print("processed_data_path : %s" % processed_path)
-
-    if os.path.exists(os.path.join(processed_path, "processed_train_data.pkl")):
-        train_data, word2index, tag2index, intent2index = pickle.load(
-            open(os.path.join(processed_path, "processed_train_data.pkl"), "rb"))
-        return train_data, word2index, tag2index, intent2index
-
-    if not os.path.exists(processed_path):
-        os.makedirs(processed_path)
-
-    try:
-        train = open(file_path, "r").readlines()
-        print("Successfully load data. # of set : %d " % len(train))
-    except:
-        print("No such file!")
-        return None, None, None, None
-
-    try:
-        train = [t[:-1] for t in train]
-        train = [[t.split("\t")[0].split(" "), t.split("\t")[1].split(" ")[:-1], t.split("\t")[1].split(" ")[-1]] for t
-                 in train]
-        train = [[t[0][1:-1], t[1][1:], t[2]] for t in train]
-
-        seq_in, seq_out, intent = list(zip(*train))
-        vocab = set(flatten(seq_in))
-        slot_tag = set(flatten(seq_out))
-        intent_tag = set(intent)
-        print("# of vocab : {vocab}, # of slot_tag : {slot_tag}, # of intent_tag : {intent_tag}".
-              format(vocab=len(vocab), slot_tag=len(slot_tag), intent_tag=len(intent_tag)))
-    except:
-        print("Please, check data format! It should be 'raw sentence "
-              "\t BIO tag sequence intent'. The following is a sample.")
-        print("BOS i want to fly from baltimore to dallas round trip EOS"
-              "\tO O O O O O B-fromloc.city_name O B-toloc."
-              "city_name B-round_trip I-round_trip atis_flight")
-        return None, None, None, None
-
+def data_pipeline(data, length=50):
+    data = [t[:-1] for t in data]  # 去掉'\n'
+    # 数据的一行像这样：'BOS i want to fly from baltimore to dallas round trip EOS
+    # \tO O O O O O B-fromloc.city_name O B-toloc.city_name B-round_trip I-round_trip atis_flight'
+    # 分割成这样[原始句子的词，标注的序列，intent]
+    data = [[t.split("\t")[0].split(" "), t.split("\t")[1].split(" ")[:-1], t.split("\t")[1].split(" ")[-1]] for t in
+            data]
+    data = [[t[0][1:-1], t[1][1:], t[2]] for t in data]  # 将BOS和EOS去掉，并去掉对应标注序列中相应的标注
+    seq_in, seq_out, intent = list(zip(*data))
     sin = []
     sout = []
-
+    # padding，原始序列和标注序列结尾+<EOS>+n×<PAD>
     for i in range(len(seq_in)):
         temp = seq_in[i]
         if len(temp) < length:
@@ -82,43 +39,42 @@ def preprocessing(file_path, length):
             temp = temp[:length]
             temp[-1] = '<EOS>'
         sout.append(temp)
+        data = list(zip(sin, sout, intent))
+    return data
 
+
+def get_info_from_training_data(data):
+    seq_in, seq_out, intent = list(zip(*data))
+    vocab = set(flatten(seq_in))
+    slot_tag = set(flatten(seq_out))
+    intent_tag = set(intent)
+    # 生成word2index
     word2index = {'<PAD>': 0, '<UNK>': 1, '<SOS>': 2, '<EOS>': 3}
     for token in vocab:
         if token not in word2index.keys():
             word2index[token] = len(word2index)
 
+    # 生成index2word
+    index2word = {v: k for k, v in word2index.items()}
+
+    # 生成tag2index
     tag2index = {'<PAD>': 0}
     for tag in slot_tag:
         if tag not in tag2index.keys():
             tag2index[tag] = len(tag2index)
 
+    # 生成index2tag
+    index2tag = {v: k for k, v in tag2index.items()}
+
+    # 生成intent2index
     intent2index = {}
     for ii in intent_tag:
         if ii not in intent2index.keys():
             intent2index[ii] = len(intent2index)
 
-    train = list(zip(sin, sout, intent))
-
-    train_data = []
-
-    for tr in train:
-        temp = prepare_sequence(tr[0], word2index)
-        temp = temp.view(1, -1)
-
-        temp2 = prepare_sequence(tr[1], tag2index)
-        temp2 = temp2.view(1, -1)
-
-        temp3 = Variable(torch.LongTensor([intent2index[tr[2]]])).cuda() if USE_CUDA else Variable(
-            torch.LongTensor([intent2index[tr[2]]]))
-
-        train_data.append((temp, temp2, temp3))
-
-    pickle.dump((train_data, word2index, tag2index, intent2index),
-                open(os.path.join(processed_path, "processed_train_data.pkl"), "wb"))
-    print("Preprocessing complete!")
-
-    return train_data, word2index, tag2index, intent2index
+    # 生成index2intent
+    index2intent = {v: k for k, v in intent2index.items()}
+    return word2index, index2word, tag2index, index2tag, intent2index, index2intent
 
 
 def getBatch(batch_size, train_data):
@@ -130,17 +86,15 @@ def getBatch(batch_size, train_data):
         temp = eindex
         eindex = eindex + batch_size
         sindex = temp
-
         yield batch
 
 
-def load_dictionary(dic_path):
-    processed_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data/")
-
-    if os.path.exists(os.path.join(processed_path, "processed_train_data.pkl")):
-        _, word2index, tag2index, intent2index = pickle.load(
-            open(os.path.join(processed_path, "processed_train_data.pkl"), "rb"))
-        return word2index, tag2index, intent2index
-    else:
-        print("Please, preprocess data first")
-        return None, None, None
+def to_index(train, word2index, tag2index, intent2index):
+    new_train = []
+    for sin, sout, intent in train:
+        sin_ix = list(map(lambda i: word2index[i], sin))
+        true_length = sin.index("<EOS>")
+        sout_ix = list(map(lambda i: tag2index[i], sout))
+        intent_ix = intent2index[intent]
+        new_train.append([sin_ix, true_length, sout_ix, intent_ix])
+    return new_train
