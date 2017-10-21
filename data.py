@@ -6,7 +6,8 @@ import numpy as np
 
 
 flatten = lambda l: [item for sublist in l for item in sublist]  # 二维展成一维
-
+index_seq2slot = lambda s, index2slot: [index2slot[i] for i in s]
+index_seq2word = lambda s, index2word: [index2word[i] for i in s]
 
 def data_pipeline(data, length=50):
     data = [t[:-1] for t in data]  # 去掉'\n'
@@ -58,7 +59,7 @@ def get_info_from_training_data(data):
     index2word = {v: k for k, v in word2index.items()}
 
     # 生成tag2index
-    tag2index = {'<PAD>': 0}
+    tag2index = {'<PAD>': 0, '<UNK>': 1, "O": 2}
     for tag in slot_tag:
         if tag not in tag2index.keys():
             tag2index[tag] = len(tag2index)
@@ -67,7 +68,7 @@ def get_info_from_training_data(data):
     index2tag = {v: k for k, v in tag2index.items()}
 
     # 生成intent2index
-    intent2index = {}
+    intent2index = {'<UNK>': 0}
     for ii in intent_tag:
         if ii not in intent2index.keys():
             intent2index[ii] = len(intent2index)
@@ -89,12 +90,14 @@ def getBatch(batch_size, train_data):
         yield batch
 
 
-def to_index(train, word2index, tag2index, intent2index):
+def to_index(train, word2index, slot2index, intent2index):
     new_train = []
     for sin, sout, intent in train:
-        sin_ix = list(map(lambda i: word2index[i], sin))
+        sin_ix = list(map(lambda i: word2index[i] if i in word2index else word2index["<UNK>"],
+                          sin))
         true_length = sin.index("<EOS>")
-        sout_ix = list(map(lambda i: tag2index[i], sout))
-        intent_ix = intent2index[intent]
+        sout_ix = list(map(lambda i: slot2index[i] if i in slot2index else slot2index["<UNK>"],
+                           sout))
+        intent_ix = intent2index[intent] if intent in intent2index else intent2index["<UNK>"]
         new_train.append([sin_ix, true_length, sout_ix, intent_ix])
     return new_train
