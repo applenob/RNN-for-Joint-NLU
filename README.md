@@ -10,4 +10,13 @@
 
 我的实现相对比较简单，用于学习目的。
 
+## 使用
 
+```
+python main.py
+```
+
+## 细节
+
+博客文章：
+- [Tensorflow动态seq2seq使用总结（r1.3）](https://github.com/applenob/RNN-for-Joint-NLU/blob/master/tensorflow_dynamic_seq2seq.md)

@@ -2,3 +2,5 @@
 .ipynb_checkpoints
 *.pyc
 log.txt
+model_raw.py
+__pycache__
