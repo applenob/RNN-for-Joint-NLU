@@ -4,4 +4,10 @@
 
 ![](https://github.com/applenob/RNN-for-Joint-NLU/raw/master/res/arc.png)
 
-目前已经实现aligned input，待实现attention。
+使用tensorflow r1.3 api，Encoder使用`tf.nn.bidirectional_dynamic_rnn`实现，Decoder使用`tf.contrib.seq2seq.CustomHelper`和`tf.contrib.seq2seq.dynamic_decode`实现。
+
+[原作者Bing Liu的Tensorflow实现](https://github.com/HadoopIt/rnn-nlu)
+
+我的实现相对比较简单，用于学习目的。
+
+

@@ -1,6 +1,5 @@
 # coding=utf-8
 import tensorflow as tf
-from tensorflow.contrib import layers
 import numpy as np
 from tensorflow.contrib.rnn import LSTMCell, LSTMStateTuple
 import sys
@@ -25,7 +24,7 @@ class Model:
                                                            name='encoder_inputs_actual_length')
         self.decoder_targets = tf.placeholder(tf.int32, [batch_size, input_steps],
                                               name='decoder_targets')
-        self.intent_targets = tf.placeholder(tf.int32, [batch_size],
+        self.intent_targets = tf.placeholder(tf.int32, [self.batch_size],
                                              name='intent_targets')
 
     def build(self):
@@ -65,6 +64,7 @@ class Model:
         print("encoder_final_state_c: ", encoder_final_state_c)
 
         # Decoder
+        decoder_cell = LSTMCell(self.hidden_size * 2)
         decoder_lengths = self.encoder_inputs_actual_length
         self.slot_W = tf.Variable(tf.random_uniform([self.hidden_size * 2, self.slot_size], -1, 1),
                              dtype=tf.float32, name="slot_W")
@@ -82,72 +82,99 @@ class Model:
         sos_step_embedded = tf.nn.embedding_lookup(self.embeddings, sos_time_slice)
         # pad_time_slice = tf.zeros([self.batch_size], dtype=tf.int32, name='PAD')
         # pad_step_embedded = tf.nn.embedding_lookup(self.embeddings, pad_time_slice)
-        pad_step_embedded = tf.zeros([self.batch_size, self.hidden_size*2+self.embedding_size],
-                                     dtype=tf.float32)
+        pad_step_embedded = tf.zeros([self.batch_size, self.hidden_size*2+self.embedding_size])
 
-        def initial_fn():
+        def loop_fn_initial():
             initial_elements_finished = (0 >= decoder_lengths)  # all False at the initial step
             initial_input = tf.concat((sos_step_embedded, encoder_outputs[0]), 1)
-            return initial_elements_finished, initial_input
+            # initial_input = sos_step_embedded
+            print("initial_input: ", initial_input)
+            # 将上面encoder的最终state传入decoder
+            initial_cell_state = self.encoder_final_state
+            initial_cell_output = None
+            initial_loop_state = None
+            return (initial_elements_finished,
+                    initial_input,
+                    initial_cell_state,
+                    initial_cell_output,
+                    initial_loop_state)
 
-        def sample_fn(time, outputs, state):
-            # 选择logit最大的下标作为sample
-            print("outputs", outputs)
-            # output_logits = tf.add(tf.matmul(outputs, self.slot_W), self.slot_b)
-            # print("slot output_logits: ", output_logits)
-            # prediction_id = tf.argmax(output_logits, axis=1)
-            prediction_id = tf.to_int32(tf.argmax(outputs, axis=1))
-            return prediction_id
-
-        def next_inputs_fn(time, outputs, state, sample_ids):
+        def loop_fn_transition(time, previous_output, previous_state, previous_loop_state):
             # 上一个时间节点上的输出类别，获取embedding再作为下一个时间节点的输入
-            pred_embedding = tf.nn.embedding_lookup(self.embeddings, sample_ids)
-            # 输入是h_i+o_{i-1}+c_i
-            next_input = tf.concat((pred_embedding, encoder_outputs[time]), 1)
+            def get_next_input():
+                output_logits = tf.add(tf.matmul(previous_output, self.slot_W), self.slot_b)
+                print("slot output_logits: ", output_logits)
+                prediction = tf.argmax(output_logits, axis=1)
+                pred_embedding = tf.nn.embedding_lookup(self.embeddings, prediction)
+                next_input = tf.concat((pred_embedding, encoder_outputs[time]), 1)
+                print("next_input: ", next_input)
+                return next_input
+
             elements_finished = (time >= decoder_lengths)  # this operation produces boolean tensor of [batch_size]
-            all_finished = tf.reduce_all(elements_finished)  # -> boolean scalar
-            next_inputs = tf.cond(all_finished, lambda: pad_step_embedded, lambda: next_input)
-            next_state = state
-            return elements_finished, next_inputs, next_state
+            # defining if corresponding sequence has ended
 
-        my_helper = tf.contrib.seq2seq.CustomHelper(initial_fn, sample_fn, next_inputs_fn)
+            # 输入是h_i+o_{i-1}
+            # input_ = tf.concat((next_input, encoder_outputs[time]), 1)
+            # input_ = next_input
+            # print("input_: ", input_)
+            finished = tf.reduce_all(elements_finished)  # -> boolean scalar
+            input_ = tf.cond(finished, lambda: pad_step_embedded, get_next_input)
+            state = previous_state
+            output = previous_output
+            loop_state = None
 
-        def decode(helper, scope, reuse=None):
-            with tf.variable_scope(scope, reuse=reuse):
-                memory = tf.transpose(encoder_outputs, [1, 0, 2])
-                attention_mechanism = tf.contrib.seq2seq.BahdanauAttention(
-                    num_units=self.hidden_size, memory=memory,
-                    memory_sequence_length=self.encoder_inputs_actual_length)
-                cell = tf.contrib.rnn.LSTMCell(num_units=self.hidden_size * 2)
-                attn_cell = tf.contrib.seq2seq.AttentionWrapper(
-                    cell, attention_mechanism, attention_layer_size=self.hidden_size)
-                out_cell = tf.contrib.rnn.OutputProjectionWrapper(
-                    attn_cell, self.slot_size, reuse=reuse
-                )
-                decoder = tf.contrib.seq2seq.BasicDecoder(
-                    cell=out_cell, helper=helper,
-                    initial_state=out_cell.zero_state(
-                        dtype=tf.float32, batch_size=self.batch_size))
-                # initial_state=encoder_final_state)
-                final_outputs, final_state, final_sequence_lengths = tf.contrib.seq2seq.dynamic_decode(
-                    decoder=decoder, output_time_major=True,
-                    impute_finished=True, maximum_iterations=self.input_steps
-                )
-                return final_outputs
+            return (elements_finished,
+                    input_,
+                    state,
+                    output,
+                    loop_state)
 
-        outputs = decode(my_helper, 'decode')
-        print("outputs: ", outputs)
-        print("outputs.rnn_output: ", outputs.rnn_output)
-        print("outputs.sample_id: ", outputs.sample_id)
-        # weights = tf.to_float(tf.not_equal(outputs[:, :-1], 0))
-        self.decoder_prediction = outputs.sample_id
-        decoder_max_steps, decoder_batch_size, decoder_dim = tf.unstack(tf.shape(outputs.rnn_output))
-        self.decoder_targets_time_majored = tf.transpose(self.decoder_targets, [1, 0])
-        self.decoder_targets_true_length = self.decoder_targets_time_majored[:decoder_max_steps]
+        def loop_fn(time, previous_output, previous_state, previous_loop_state):
+            print("time: ", time)
+            if previous_state is None:  # time == 0
+                assert previous_output is None and previous_state is None
+                return loop_fn_initial()
+            else:
+                return loop_fn_transition(time, previous_output,
+                                          previous_state, previous_loop_state)
+
+        decoder_outputs_ta, decoder_final_state, _ = tf.nn.raw_rnn(decoder_cell, loop_fn, scope="raw_rnn")
+        decoder_outputs = decoder_outputs_ta.stack()
+        print("decoder_outputs", decoder_outputs)
+        decoder_max_steps, decoder_batch_size, decoder_dim = tf.unstack(tf.shape(decoder_outputs))
+        decoder_outputs_flat = tf.reshape(decoder_outputs, (-1, decoder_dim))
+        decoder_logits_flat = tf.add(tf.matmul(decoder_outputs_flat, self.slot_W), self.slot_b)
+        self.decoder_logits = tf.reshape(decoder_logits_flat, (decoder_max_steps,
+                                                          decoder_batch_size, self.slot_size))
+        # decoder_prob = tf.nn.softmax(decoder_logits)
+
+        self.decoder_prediction = tf.argmax(self.decoder_logits, 2)
+
+        # loss function
+
+        self.decoder_targets_true_length = self.decoder_targets[:, :decoder_max_steps]
+        self.decoder_targets_one_hot = tf.one_hot(self.decoder_targets_true_length,
+                                                  depth=self.slot_size, dtype=tf.float32)
         print("decoder_targets_true_length: ", self.decoder_targets_true_length)
-        self.mask = tf.to_float(tf.not_equal(self.decoder_targets_true_length, 0))
+        print("self.decoder_targets_one_hot: ", self.decoder_targets_one_hot)
+
+        # stepwise_cross_entropy = tf.nn.softmax_cross_entropy_with_logits(
+        #     labels=self.decoder_targets_one_hot,
+        #     logits=self.decoder_logits)
+        #
+        # # Mask the losses
+        self.mask = tf.sign(tf.to_float(self.decoder_targets_true_length))
+        # self.stepwise_cross_entropy = tf.transpose(stepwise_cross_entropy, [1, 0])
+        # masked_losses = self.mask * self.stepwise_cross_entropy
+        # mean_loss_by_example = tf.reduce_sum(masked_losses, reduction_indices=1) / tf.to_float(decoder_lengths)
+        # loss_slot = tf.reduce_mean(mean_loss_by_example)
+
         loss_slot = tf.contrib.seq2seq.sequence_loss(
-            outputs.rnn_output, self.decoder_targets_true_length, weights=self.mask)
+            targets=self.decoder_targets_true_length,
+            logits=self.decoder_logits,
+            weights=self.mask,
+            name="slot_loss"
+            )
 
         cross_entropy = tf.nn.softmax_cross_entropy_with_logits(
             labels=tf.one_hot(self.intent_targets, depth=self.intent_size, dtype=tf.float32),
@@ -161,11 +188,6 @@ class Model:
         gradients, _ = tf.clip_by_global_norm(self.grads, 5)  # clip gradients
         self.train_op = optimizer.apply_gradients(zip(self.grads, self.vars))
         # self.train_op = optimizer.minimize(self.loss)
-        # train_op = layers.optimize_loss(
-        #     loss, tf.train.get_global_step(),
-        #     optimizer=optimizer,
-        #     learning_rate=0.001,
-        #     summaries=['loss', 'learning_rate'])
 
     def step(self, sess, mode, trarin_batch):
         """ perform each batch"""
@@ -177,7 +199,7 @@ class Model:
         #       np.shape(unziped[2]), np.shape(unziped[3]))
         if mode == 'train':
             output_feeds = [self.train_op, self.loss, self.decoder_prediction,
-                            self.intent, self.mask, self.slot_W]
+                            self.intent, self.mask, self.decoder_logits, self.slot_W]
             feed_dict = {self.encoder_inputs: np.transpose(unziped[0], [1, 0]),
                          self.encoder_inputs_actual_length: unziped[1],
                          self.decoder_targets: unziped[2],
