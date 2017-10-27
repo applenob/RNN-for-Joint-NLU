@@ -1,5 +1,5 @@
 # coding=utf-8
-# cer
+# @author: cer
 
 import random
 import numpy as np
@@ -8,6 +8,7 @@ import numpy as np
 flatten = lambda l: [item for sublist in l for item in sublist]  # 二维展成一维
 index_seq2slot = lambda s, index2slot: [index2slot[i] for i in s]
 index_seq2word = lambda s, index2word: [index2word[i] for i in s]
+
 
 def data_pipeline(data, length=50):
     data = [t[:-1] for t in data]  # 去掉'\n'
