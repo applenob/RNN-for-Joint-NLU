@@ -42,7 +42,7 @@ class Model:
         encoder_f_cell = LSTMCell(self.hidden_size)
         encoder_b_cell = LSTMCell(self.hidden_size)
         # encoder_inputs_time_major = tf.transpose(self.encoder_inputs_embedded, perm=[1, 0, 2])
-        # 下面四个变量的尺寸：B*T*D，B*T*D，B*D，B*D
+        # 下面四个变量的尺寸：T*B*D，T*B*D，B*D，B*D
         (encoder_fw_outputs, encoder_bw_outputs), (encoder_fw_final_state, encoder_bw_final_state) = \
             tf.nn.bidirectional_dynamic_rnn(cell_fw=encoder_f_cell,
                                             cell_bw=encoder_b_cell,
@@ -146,10 +146,12 @@ class Model:
         self.decoder_targets_time_majored = tf.transpose(self.decoder_targets, [1, 0])
         self.decoder_targets_true_length = self.decoder_targets_time_majored[:decoder_max_steps]
         print("decoder_targets_true_length: ", self.decoder_targets_true_length)
+        # 定义mask，使padding不计入loss计算
         self.mask = tf.to_float(tf.not_equal(self.decoder_targets_true_length, 0))
+        # 定义slot标注的损失
         loss_slot = tf.contrib.seq2seq.sequence_loss(
             outputs.rnn_output, self.decoder_targets_true_length, weights=self.mask)
-
+        # 定义intent分类的损失
         cross_entropy = tf.nn.softmax_cross_entropy_with_logits(
             labels=tf.one_hot(self.intent_targets, depth=self.intent_size, dtype=tf.float32),
             logits=intent_logits)
