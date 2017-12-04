@@ -6,6 +6,7 @@ from data import *
 from model import Model
 from my_metrics import *
 from tensorflow.python import debug as tf_debug
+import numpy as np
 
 input_steps = 50
 embedding_size = 64
@@ -65,27 +66,30 @@ def train(is_debug=False):
             #     print("slot_W:", slot_W)
             #     print("decoder_prediction:", decoder_prediction[index])
             #     print("intent:", list(zip(*batch))[3][index])
-            mean_loss += loss
-            train_loss += loss
-            if i % 10 == 0:
-                if i > 0:
-                    mean_loss = mean_loss / 10.0
-                print('Average train loss at epoch %d, step %d: %f' % (epoch, i, mean_loss))
-                mean_loss = 0
+            # mean_loss += loss
+            # train_loss += loss
+            # if i % 10 == 0:
+            #     if i > 0:
+            #         mean_loss = mean_loss / 10.0
+            #     print('Average train loss at epoch %d, step %d: %f' % (epoch, i, mean_loss))
+            #     mean_loss = 0
         train_loss /= (i + 1)
         print("[Epoch {}] Average train loss: {}".format(epoch, train_loss))
 
         # 每训一个epoch，测试一次
         pred_slots = []
+        slot_accs = []
+        intent_accs = []
         for j, batch in enumerate(getBatch(batch_size, index_test)):
             decoder_prediction, intent = model.step(sess, "test", batch)
             decoder_prediction = np.transpose(decoder_prediction, [1, 0])
             if j == 0:
                 index = random.choice(range(len(batch)))
                 # index = 0
-                print("Input Sentence        : ", index_seq2word(batch[index][0], index2word))
-                print("Slot Truth            : ", index_seq2slot(batch[index][2], index2slot))
-                print("Slot Prediction       : ", index_seq2slot(decoder_prediction[index], index2slot))
+                sen_len = batch[index][1]
+                print("Input Sentence        : ", index_seq2word(batch[index][0], index2word)[:sen_len])
+                print("Slot Truth            : ", index_seq2slot(batch[index][2], index2slot)[:sen_len])
+                print("Slot Prediction       : ", index_seq2slot(decoder_prediction[index], index2slot)[:sen_len])
                 print("Intent Truth          : ", index2intent[batch[index][3]])
                 print("Intent Prediction     : ", index2intent[intent[index]])
             slot_pred_length = list(np.shape(decoder_prediction))[1]
@@ -100,12 +104,16 @@ def train(is_debug=False):
             # print(true_slot, decoder_prediction)
             slot_acc = accuracy_score(true_slot, decoder_prediction, true_length)
             intent_acc = accuracy_score(list(zip(*batch))[3], intent)
-            print("slot accuracy: {}, intent accuracy: {}".format(slot_acc, intent_acc))
+            # print("slot accuracy: {}, intent accuracy: {}".format(slot_acc, intent_acc))
+            slot_accs.append(slot_acc)
+            intent_accs.append(intent_acc)
         pred_slots_a = np.vstack(pred_slots)
         # print("pred_slots_a: ", pred_slots_a.shape)
         true_slots_a = np.array(list(zip(*index_test))[2])[:pred_slots_a.shape[0]]
         # print("true_slots_a: ", true_slots_a.shape)
-        print("F1 score for epoch {}: {}".format(epoch, f1_for_sequence_batch(true_slots_a, pred_slots_a)))
+        print("Intent accuracy for epoch {}: {}".format(epoch, np.average(intent_accs)))
+        print("Slot accuracy for epoch {}: {}".format(epoch, np.average(slot_accs)))
+        print("Slot F1 score for epoch {}: {}".format(epoch, f1_for_sequence_batch(true_slots_a, pred_slots_a)))
 
 
 def test_data():
