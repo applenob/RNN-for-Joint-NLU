@@ -3,7 +3,7 @@
 import tensorflow as tf
 from tensorflow.contrib import layers
 import numpy as np
-from tensorflow.contrib.rnn import LSTMCell, LSTMStateTuple
+from tensorflow.contrib.rnn import LSTMCell, LSTMStateTuple,DropoutWrapper
 import sys
 
 
@@ -39,8 +39,10 @@ class Model:
         # Encoder
 
         # 使用单个LSTM cell
-        encoder_f_cell = LSTMCell(self.hidden_size)
-        encoder_b_cell = LSTMCell(self.hidden_size)
+        encoder_f_cell_0 = LSTMCell(self.hidden_size)
+        encoder_b_cell_0 = LSTMCell(self.hidden_size)
+        encoder_f_cell = DropoutWrapper(encoder_f_cell_0,output_keep_prob=0.5)
+        encoder_b_cell = DropoutWrapper(encoder_b_cell_0,output_keep_prob=0.5)
         # encoder_inputs_time_major = tf.transpose(self.encoder_inputs_embedded, perm=[1, 0, 2])
         # 下面四个变量的尺寸：T*B*D，T*B*D，B*D，B*D
         (encoder_fw_outputs, encoder_bw_outputs), (encoder_fw_final_state, encoder_bw_final_state) = \
@@ -162,7 +164,7 @@ class Model:
         self.grads, self.vars = zip(*optimizer.compute_gradients(self.loss))
         print("vars for loss function: ", self.vars)
         gradients, _ = tf.clip_by_global_norm(self.grads, 5)  # clip gradients
-        self.train_op = optimizer.apply_gradients(zip(self.grads, self.vars))
+        self.train_op = optimizer.apply_gradients(zip(self.gradients, self.vars))
         # self.train_op = optimizer.minimize(self.loss)
         # train_op = layers.optimize_loss(
         #     loss, tf.train.get_global_step(),
