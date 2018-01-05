@@ -163,7 +163,7 @@ class Model:
         optimizer = tf.train.AdamOptimizer(name="a_optimizer")
         self.grads, self.vars = zip(*optimizer.compute_gradients(self.loss))
         print("vars for loss function: ", self.vars)
-        gradients, _ = tf.clip_by_global_norm(self.grads, 5)  # clip gradients
+        self.gradients, _ = tf.clip_by_global_norm(self.grads, 5)  # clip gradients
         self.train_op = optimizer.apply_gradients(zip(self.gradients, self.vars))
         # self.train_op = optimizer.minimize(self.loss)
         # train_op = layers.optimize_loss(
